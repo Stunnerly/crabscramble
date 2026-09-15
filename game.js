@@ -301,6 +301,7 @@ function pDown(x, y) {
     mapDrag = { y0: y, s0: mapScroll || 0, moved: false, x, y };
     return;
   }
+  if (mode === 'title') titlePointer = { x, y, t: performance.now() };
   if (mode === 'title' || mode === 'dead' || mode === 'won') {
     for (const b of buttons) {
       if (x >= b.x && x <= b.x+b.w && y >= b.y && y <= b.y+b.h) { b.fn(); return; }
@@ -315,6 +316,7 @@ function pMove(x, y) {
     mapScroll = clampMapScroll(mapDrag.s0 + (y - mapDrag.y0));
     return;
   }
+  if (mode === 'title') titlePointer = { x, y, t: performance.now() };
   if (aim) { aim.cx = x; aim.cy = y; }
 }
 function pUp() {
@@ -1039,7 +1041,7 @@ function drawObstacle(x, y, o) {
   ctx.restore();
 }
 
-function drawCrab(x, y, r, style, face, wiggle, isPlayer, type, spent, expr) {
+function drawCrab(x, y, r, style, face, wiggle, isPlayer, type, spent, expr, anim) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(wiggle);
   const INK = '#2a1f18';
   const olw = Math.max(2.2, r*0.18);   // outer contour weight (heavier than details)
@@ -1055,23 +1057,25 @@ function drawCrab(x, y, r, style, face, wiggle, isPlayer, type, spent, expr) {
     }
 
   // claws — outlined, with an ink pincer notch
-  const claw = (cx, cy, cr) => {
+  const claw = (cx, cy, cr, rot) => {
+    const s = cx < 0 ? -1 : 1;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot || 0);
     ctx.fillStyle = style.color;
     ctx.strokeStyle = INK; ctx.lineWidth = olw*0.85;
-    ctx.beginPath(); ctx.arc(cx, cy, cr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, cr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
     ctx.fillStyle = INK;
-    const s = cx < 0 ? -1 : 1;
     ctx.beginPath();
-    ctx.moveTo(cx - s*cr*0.25, cy - cr*0.9);
-    ctx.lineTo(cx + s*cr*0.3,  cy - cr*0.25);
-    ctx.lineTo(cx - s*cr*0.6,  cy - cr*0.1);
+    ctx.moveTo(-s*cr*0.25, -cr*0.9);
+    ctx.lineTo( s*cr*0.3,  -cr*0.25);
+    ctx.lineTo(-s*cr*0.6,  -cr*0.1);
     ctx.closePath(); ctx.fill();
+    ctx.restore();
   };
   if (type === 'fiddler') {
     // the big claw always menaces the inside of the bucket
     const s = face >= 0 ? 1 : -1;
     claw(-s*r*0.98, -r*0.2, r*0.3);
-    claw(s*r*1.18, -r*0.4, r*0.78);
+    claw(s*r*1.18, -r*0.4, r*0.78, anim && anim.snip ? -s*anim.snip*0.45 : 0);
   }
   else { claw(-r*1.02, -r*0.25, r*0.42); claw(r*1.02, -r*0.25, r*0.42); }
 
@@ -1158,7 +1162,8 @@ function drawCrab(x, y, r, style, face, wiggle, isPlayer, type, spent, expr) {
   ctx.beginPath(); ctx.arc(exL, eyeY, eyeR, 0, Math.PI*2); ctx.fill(); ctx.stroke();
   ctx.beginPath(); ctx.arc(exR, eyeY, eyeR, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
-  const look = face*eyeR*0.3;
+  let look = face*eyeR*0.3, lookY = 0;
+  if (anim && anim.lookX !== undefined) { look = anim.lookX*eyeR*0.42; lookY = anim.lookY*eyeR*0.32; }
   if (expr === 'ko') {
     // X-eyes + lolling tongue
     ctx.strokeStyle = INK; ctx.lineWidth = Math.max(2, r*0.11); ctx.lineCap = 'round';
@@ -1196,12 +1201,12 @@ function drawCrab(x, y, r, style, face, wiggle, isPlayer, type, spent, expr) {
     // pupils, with glint on the living
     const droop = spent ? eyeR*0.28 : 0;
     ctx.fillStyle = '#1a1512';
-    ctx.beginPath(); ctx.arc(exL+look, eyeY+droop, eyeR*0.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(exR+look, eyeY+droop, eyeR*0.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(exL+look, eyeY+droop+lookY, eyeR*0.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(exR+look, eyeY+droop+lookY, eyeR*0.5, 0, Math.PI*2); ctx.fill();
     if (!spent) {
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(exL+look-eyeR*0.18, eyeY-eyeR*0.18, eyeR*0.15, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(exR+look-eyeR*0.18, eyeY-eyeR*0.18, eyeR*0.15, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(exL+look-eyeR*0.18, eyeY+lookY-eyeR*0.18, eyeR*0.15, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(exR+look-eyeR*0.18, eyeY+lookY-eyeR*0.18, eyeR*0.15, 0, Math.PI*2); ctx.fill();
     }
   }
 
@@ -1232,6 +1237,7 @@ function drawCrab(x, y, r, style, face, wiggle, isPlayer, type, spent, expr) {
     lid(exL, eyeY, 0.1, -0.2); lid(exR, eyeY, 0.1, 0.2);             // eager: outer edge low, wide-open
   }
   // panic / gold / grip / ko: no lids — the eye state IS the expression
+  if (anim && anim.blink) { lid(exL, eyeY, 0.96, 0); lid(exR, eyeY, 0.96, 0); }
 
   // mouth
   ctx.strokeStyle = INK; ctx.lineWidth = Math.max(2, r*0.11); ctx.lineCap = 'round';
@@ -1387,6 +1393,21 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
 }
 
+// title-screen life: per-crab idle events on random timers, sparse by design
+let titleCast = null, titlePointer = null, titleSand = [];
+const rnd = (a, b) => a + Math.random()*(b-a);
+function buildTitleCast() {
+  const now = performance.now()/1000;
+  const mk = (o) => Object.assign({ evStart: null, next: now + rnd(1, o.gap[1]), blinkNext: now + rnd(1, 5), blinkStart: null }, o);
+  titleCast = [
+    mk({ fx: 0.8,  dy: -24, r: 19, st: TYPES.king,     face: -1, type: 'king',     ev: 'nod',     gap: [5, 9], dur: 0.7 }),
+    mk({ fx: 0.62, dy: 6,   r: 21, st: TYPES.fiddler,  face: -1, type: 'fiddler',  ev: 'snip',    gap: [3, 5], dur: 0.35 }),
+    mk({ fx: 0.1,  dy: 46,  r: 15, st: TYPES.blue,     face: 1,  type: 'blue',     ev: 'dig',     gap: [5, 9], dur: 0.7 }),
+    mk({ fx: 0.9,  dy: 44,  r: 15, st: TYPES.speckled, face: -1, type: 'speckled', ev: 'hop',     gap: [4, 8], dur: 0.4 }),
+    mk({ fx: 0.72, dy: 52,  r: 16, st: TYPES.red,      face: -1, type: 'red',      ev: 'scuttle', gap: [4, 8], dur: 0.8 }),
+  ];
+}
+
 function drawTitleWord(word, x, y, size, t) {
   ctx.font = '900 ' + size + 'px system-ui, sans-serif';
   ctx.textAlign = 'left';
@@ -1492,16 +1513,32 @@ function drawTitle() {
     ctx.stroke();
   }
 
-  // sand with a lapping foam edge
+  // sparkle on the water
+  for (let i = 0; i < 7; i++) {
+    const a = Math.max(0, Math.sin(t*2.2 + i*1.7));
+    ctx.fillStyle = 'rgba(255,255,255,' + (a*0.9) + ')';
+    const sx = ((i*151 + 40) % W), sy = horizon + 10 + ((i*67) % ((shore-horizon)-20));
+    ctx.beginPath(); ctx.arc(sx, sy, (1.2 + a*1.4)*sc, 0, Math.PI*2); ctx.fill();
+  }
+
+  // sand, with a tide that rolls in and drags back out
+  const tide = Math.sin(t*Math.PI*2/6)*9*sc;
+  const shoreAt = (x) => shore + tide + Math.sin(x*0.03 + t*1.2)*5;
   const sand = ctx.createLinearGradient(0, shore, 0, H);
   sand.addColorStop(0, '#f2dfb0'); sand.addColorStop(1, '#e0c48c');
   ctx.fillStyle = sand;
-  ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(0, shore);
-  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shore + Math.sin(x*0.03 + t*1.2)*5 + Math.sin(t*0.9)*4);
+  ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(0, shoreAt(0));
+  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shoreAt(x));
   ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+  // wet sand left behind as the water retreats
+  ctx.fillStyle = 'rgba(120,90,50,0.16)';
+  ctx.beginPath();
+  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shoreAt(x));
+  for (let x = W; x >= -12; x -= 12) ctx.lineTo(Math.max(x, 0), shore + 10*sc + Math.sin(x*0.03 + t*1.2)*5);
+  ctx.closePath(); ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3*sc;
   ctx.beginPath();
-  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shore + Math.sin(x*0.03 + t*1.2)*5 + Math.sin(t*0.9)*4);
+  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shoreAt(x));
   ctx.stroke();
   ctx.fillStyle = 'rgba(160,120,70,0.25)';
   for (let i = 0; i < 26; i++) {
@@ -1525,21 +1562,56 @@ function drawTitle() {
     ctx.lineTo(px+16*sc, py); ctx.lineTo(px-16*sc, py); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#ff8a7f'; ctx.fillRect(px-25*sc, py-36*sc, 50*sc, 7*sc); ctx.strokeRect(px-25*sc, py-36*sc, 50*sc, 7*sc);
   }
-  const cast = [
-    { x: W*0.8,  y: sceneY - 24*sc, r: 19*sc, st: TYPES.king,     face: -1, type: 'king' },
-    { x: W*0.6,  y: sceneY + 6*sc,  r: 21*sc, st: TYPES.fiddler,  face: -1, type: 'fiddler' },
-    { x: W*0.1,  y: sceneY + 46*sc, r: 15*sc, st: TYPES.blue,     face: 1,  type: 'blue' },
-    { x: W*0.9,  y: sceneY + 44*sc, r: 15*sc, st: TYPES.speckled, face: -1, type: 'speckled' },
-    { x: W*0.7,  y: sceneY + 52*sc, r: 16*sc, st: TYPES.red,      face: -1, type: 'red' },
-    { x: W*0.5,  y: sceneY + 44*sc, r: 27*sc, st: { color:'#f0824f', color2:'#c65f33' }, face: 1, type: 'player', hero: true },
-  ];
-  cast.sort((a, b) => a.y - b.y);
-  cast.forEach((c, i) => {
-    ctx.fillStyle = 'rgba(0,0,0,0.12)';
-    ctx.beginPath(); ctx.ellipse(c.x, c.y + c.r*0.9, c.r*1.3, c.r*0.35, 0, 0, Math.PI*2); ctx.fill();
-    const wig = Math.sin(t*(c.hero ? 2.4 : 1.6) + i*1.3)*(c.hero ? 0.08 : 0.05);
-    drawCrab(c.x, c.y, c.r, c.st, c.face, wig, !!c.hero, c.type, false, c.hero ? 'joy' : undefined);
-  });
+  if (!titleCast) buildTitleCast();
+  const now = t;
+  const pointerLive = titlePointer && (performance.now() - titlePointer.t) < 2500;
+  const lookAt = (x, y) => {
+    if (!pointerLive) return {};
+    const dx = titlePointer.x - x, dy = titlePointer.y - y, d = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, d/140);
+    return { lookX: dx/d*k, lookY: dy/d*k };
+  };
+  const drawList = [];
+  for (const c of titleCast) {
+    const x = W*c.fx, y = sceneY + c.dy*sc, r = c.r*sc;
+    if (c.evStart === null && now > c.next) c.evStart = now;
+    let p = 0;
+    if (c.evStart !== null) { p = (now - c.evStart)/c.dur; if (p >= 1) { c.evStart = null; c.next = now + rnd(c.gap[0], c.gap[1]); p = 0; } }
+    if (c.blinkStart === null && now > c.blinkNext) c.blinkStart = now;
+    let blink = 0;
+    if (c.blinkStart !== null) { const bp = (now - c.blinkStart)/0.16; if (bp >= 1) { c.blinkStart = null; c.blinkNext = now + rnd(2, 6); } else blink = 1; }
+    let dx = 0, dy = 0, rot = Math.sin(now*1.5 + c.fx*9)*0.04;
+    const anim = Object.assign({ blink }, lookAt(x, y));
+    if (p > 0) {
+      if (c.ev === 'snip') anim.snip = Math.sin(p*Math.PI);
+      else if (c.ev === 'nod') rot += Math.sin(p*Math.PI)*0.16;
+      else if (c.ev === 'hop') dy -= Math.sin(p*Math.PI)*16*sc;
+      else if (c.ev === 'scuttle') dx += Math.sin(p*Math.PI*2)*14*sc;
+      else if (c.ev === 'dig') {
+        dy += Math.abs(Math.sin(p*Math.PI*3))*3*sc;
+        if (Math.random() < 0.5) titleSand.push({ x: x + (Math.random()-0.5)*10, y: y + r*0.6,
+          vx: (c.face > 0 ? -1 : 1)*(40 + Math.random()*40), vy: -90 - Math.random()*60, t: 0 });
+      }
+    }
+    drawList.push({ x: x+dx, y: y+dy, r, c, rot, anim });
+  }
+  // the hero: up on the bucket he escaped, big, rocking, pleased with himself
+  const hx = W*0.24 + 6*sc, hy = sceneY - 64*sc + Math.sin(now*2.4)*3*sc;
+  drawList.push({ x: hx, y: hy, r: 36*sc, hero: true, rot: Math.sin(now*2.4)*0.13 });
+  drawList.sort((a, b) => a.y - b.y);
+  for (const d of drawList) {
+    if (!d.hero) {
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.beginPath(); ctx.ellipse(d.x, d.y + d.r*0.9, d.r*1.3, d.r*0.35, 0, 0, Math.PI*2); ctx.fill();
+      drawCrab(d.x, d.y, d.r, d.c.st, d.c.face, d.rot, false, d.c.type, false, undefined, d.anim);
+    } else {
+      drawCrab(d.x, d.y, d.r, { color:'#f0824f', color2:'#c65f33' }, 1, d.rot, true, 'player', false, 'joy');
+    }
+  }
+  for (const g of titleSand) { g.t += 1/60; g.x += g.vx/60; g.y += g.vy/60; g.vy += 400/60; }
+  titleSand = titleSand.filter(g => g.t < 0.6);
+  ctx.fillStyle = '#d9b97a';
+  for (const g of titleSand) { ctx.beginPath(); ctx.arc(g.x, g.y, 2*sc, 0, Math.PI*2); ctx.fill(); }
 
   // driftwood plank with the buttons
   const bw = Math.min(W*0.74, 300), bx = W/2 - bw/2, by = H*0.585;
