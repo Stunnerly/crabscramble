@@ -1395,6 +1395,7 @@ function roundRect(x, y, w, h, r) {
 
 // title-screen life: per-crab idle events on random timers, sparse by design
 let titleCast = null, titlePointer = null, titleSand = [];
+const heroLook = { x: 0, y: 0, tx: 0, ty: 0, next: 0, blinkStart: null, blinkNext: 0 };
 const rnd = (a, b) => a + Math.random()*(b-a);
 function buildTitleCast() {
   const now = performance.now()/1000;
@@ -1416,11 +1417,14 @@ function drawTitleWord(word, x, y, size, t) {
   const gap = size*0.02;
   const total = widths.reduce((a,b)=>a+b, 0) + gap*(chars.length-1);
   let cx = x - total/2;
+  const placed = [];
   chars.forEach((ch, i) => {
     const w = widths[i];
+    const py = y + Math.sin(t*2 + i*0.8)*2.5, rot = (i%2 ? 0.045 : -0.045) + Math.sin(t*1.6 + i*0.9)*0.04;
+    placed.push({ cx: cx + w/2, cy: py, rot, w });
     ctx.save();
-    ctx.translate(cx + w/2, y + Math.sin(t*2 + i*0.8)*2.5);
-    ctx.rotate((i%2 ? 0.045 : -0.045) + Math.sin(t*1.6 + i*0.9)*0.04);
+    ctx.translate(cx + w/2, py);
+    ctx.rotate(rot);
     ctx.fillStyle = 'rgba(42,31,24,0.35)';
     ctx.fillText(ch, -w/2 + size*0.05, size*0.06);
     ctx.lineJoin = 'round'; ctx.lineWidth = size*0.16; ctx.strokeStyle = '#2a1f18';
@@ -1432,6 +1436,7 @@ function drawTitleWord(word, x, y, size, t) {
     cx += w + gap;
   });
   ctx.textAlign = 'center';
+  return placed;
 }
 
 function drawTippedBucket(x, y, sc, t) {
@@ -1470,6 +1475,7 @@ function drawTippedBucket(x, y, sc, t) {
 function drawTitle() {
   const t = performance.now()/1000;
   const sc = Math.min(W, 430)/430;
+  const pointerLive = titlePointer && (performance.now() - titlePointer.t) < 2500;
   const horizon = H*0.3, shore = H*0.385;
 
   // sky
@@ -1489,8 +1495,8 @@ function drawTitle() {
     ctx.fillStyle = '#fff';
     for (const [lx, ly, lr] of lumps) { ctx.beginPath(); ctx.arc(cx+lx*s, cy+ly*s, lr*s, 0, Math.PI*2); ctx.fill(); }
   };
-  cloud(((t*9) % (W+160)) - 80, H*0.07, sc*1.1);
-  cloud(((t*6 + W*0.55) % (W+160)) - 80, H*0.2, sc*0.8);
+  cloud(((t*9) % (W+160)) - 80, H*0.045, sc*0.9);
+  cloud(((t*6 + W*0.55) % (W+160)) - 80, H*0.085, sc*0.65);
   // gull
   {
     const gx = ((t*28) % (W+120)) - 60, gy = H*0.16 + Math.sin(t*3)*4;
@@ -1547,8 +1553,32 @@ function drawTitle() {
 
   // title
   const ts1 = Math.min(W*0.17, 72)*sc, ts2 = Math.min(W*0.14, 58)*sc;
-  drawTitleWord('CRAB', W/2, H*0.08 + ts1*0.7, ts1, t);
-  drawTitleWord('SCRAMBLE', W/2, H*0.08 + ts1*0.7 + ts2*1.05, ts2, t);
+  const crabLetters = drawTitleWord('CRAB', W/2, H*0.115 + ts1*0.7, ts1, t);
+  drawTitleWord('SCRAMBLE', W/2, H*0.115 + ts1*0.7 + ts2*1.05, ts2, t);
+  // the hero, perched on the C, casing the joint: still body, shifty eyes
+  {
+    const L = crabLetters[0];
+    if (t > heroLook.next) {
+      heroLook.tx = (Math.random()*2 - 1)*0.95; heroLook.ty = (Math.random() - 0.35)*0.5;
+      heroLook.next = t + rnd(0.5, 2.2);
+    }
+    let tx = heroLook.tx, ty = heroLook.ty;
+    const hr = ts1*0.44;
+    const hxs = L.cx - L.w*0.22, hys = L.cy - ts1*0.72 - hr*0.7;
+    if (pointerLive) {
+      const dx = titlePointer.x - hxs, dy = titlePointer.y - hys, d = Math.hypot(dx, dy) || 1, k = Math.min(1, d/120);
+      tx = dx/d*k; ty = dy/d*k;
+    }
+    heroLook.x += (tx - heroLook.x)*0.35; heroLook.y += (ty - heroLook.y)*0.35;
+    if (heroLook.blinkStart === null && t > heroLook.blinkNext) heroLook.blinkStart = t;
+    let blink = 0;
+    if (heroLook.blinkStart !== null) { if (t - heroLook.blinkStart > 0.15) { heroLook.blinkStart = null; heroLook.blinkNext = t + rnd(2, 5); } else blink = 1; }
+    ctx.save();
+    ctx.translate(L.cx, L.cy); ctx.rotate(L.rot);
+    drawCrab(-L.w*0.22, -ts1*0.72 - hr*0.7, hr, { color:'#f0824f', color2:'#c65f33' }, 1, 0, true, 'player', false, 'normal',
+      { lookX: heroLook.x, lookY: heroLook.y, blink });
+    ctx.restore();
+  }
 
   // the escape scene: tipped bucket, cast loose on the sand
   const sceneY = shore + (H*0.58 - shore)*0.42;
@@ -1582,7 +1612,6 @@ function drawTitle() {
   }
   if (!titleCast) buildTitleCast();
   const now = t;
-  const pointerLive = titlePointer && (performance.now() - titlePointer.t) < 2500;
   const lookAt = (x, y) => {
     if (!pointerLive) return {};
     const dx = titlePointer.x - x, dy = titlePointer.y - y, d = Math.hypot(dx, dy) || 1;
@@ -1613,9 +1642,6 @@ function drawTitle() {
     }
     drawList.push({ x: x+dx, y: y+dy, r, c, rot, anim });
   }
-  // the hero: up on the bucket he escaped, big, rocking, pleased with himself
-  const hx = W*0.24 + 6*sc, hy = sceneY - 64*sc + Math.sin(now*2.4)*3*sc;
-  drawList.push({ x: hx, y: hy, r: 36*sc, hero: true, rot: Math.sin(now*2.4)*0.13 });
   drawList.sort((a, b) => a.y - b.y);
   for (const d of drawList) {
     if (!d.hero) {
