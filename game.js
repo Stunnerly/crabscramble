@@ -142,6 +142,46 @@ function clampMapScroll(v) {
 // ---------- Session persistence (in-memory) ----------
 let best = 0, ghostBest = null, wallet = 0;
 const gestures = { flick: 0, sling: 0 };
+
+// ---------- Persistence (browser storage; hosted page) ----------
+const SAVE_KEY = 'crabscramble.save.v1';
+let resetArmedT = 0;
+function saveGame() {
+  try {
+    const gb = ghostBest ? { height: ghostBest.height,
+      frames: ghostBest.frames.filter((f, i) => i % 2 === 0) } : null;
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      unlocked, levelStars, levelDone, wallet, best, ghostBest: gb,
+      quests: { day: DAILY_SEED, list: quests.map(q => ({ prog: q.prog, done: q.done })) },
+      muted, gestures,
+    }));
+  } catch (e) {}
+}
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (typeof d.unlocked === 'number') unlocked = Math.max(1, Math.min(LEVELS.length, d.unlocked));
+    if (Array.isArray(d.levelStars)) d.levelStars.forEach((v, i) => { if (i < LEVELS.length) levelStars[i] = v|0; });
+    if (Array.isArray(d.levelDone))  d.levelDone.forEach((v, i)  => { if (i < LEVELS.length) levelDone[i] = !!v; });
+    if (typeof d.wallet === 'number') wallet = d.wallet;
+    if (typeof d.best === 'number') best = d.best;
+    if (d.ghostBest && Array.isArray(d.ghostBest.frames) && d.ghostBest.frames.length > 1) ghostBest = d.ghostBest;
+    if (d.quests && d.quests.day === DAILY_SEED && Array.isArray(d.quests.list))
+      d.quests.list.forEach((q, i) => { if (quests[i]) { quests[i].prog = q.prog || 0; quests[i].done = !!q.done; } });
+    if (typeof d.muted === 'boolean') muted = d.muted;
+    if (d.gestures) { gestures.flick = d.gestures.flick|0; gestures.sling = d.gestures.sling|0; }
+  } catch (e) {}
+}
+function wipeGame() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  unlocked = 1; levelStars.fill(0); levelDone.fill(false);
+  wallet = 0; best = 0; ghostBest = null;
+  quests.forEach(q => { q.prog = 0; q.done = false; });
+  gestures.flick = 0; gestures.sling = 0;
+}
+loadGame();
 const quests = [
   { text:'Collect 30 sand dollars', target:30, prog:0, done:false, reward:15 },
   { text:'Land on 3 blue crabs',    target:3,  prog:0, done:false, reward:15 },
@@ -152,7 +192,7 @@ function questBump(i, val, isMax) {
   if (q.done) return;
   q.prog = isMax ? Math.max(q.prog, val) : q.prog + val;
   if (q.prog >= q.target) {
-    q.done = true; wallet += q.reward;
+    q.done = true; wallet += q.reward; saveGame();
     popup('QUEST DONE! +' + q.reward, player ? player.x : W/2, player ? player.y - 90 : H/2, '#9fe08a');
     sfx.coin();
   }
@@ -520,6 +560,7 @@ function die(cause) {
   }
   shake = 0; sfx.death();
   spawnBurst(player.x, player.y, 'rgba(255,120,80,', 30);
+  saveGame();
 }
 
 function startEscape() {
@@ -531,6 +572,7 @@ function startEscape() {
   particles = [];
   shake = 0;
   sfx.win();
+  saveGame();
 }
 function winLevel() { mode = 'won'; }
 
@@ -1345,33 +1387,201 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
 }
 
+function drawTitleWord(word, x, y, size, t) {
+  ctx.font = '900 ' + size + 'px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  const chars = [...word];
+  const widths = chars.map(ch => ctx.measureText(ch).width);
+  const gap = size*0.02;
+  const total = widths.reduce((a,b)=>a+b, 0) + gap*(chars.length-1);
+  let cx = x - total/2;
+  chars.forEach((ch, i) => {
+    const w = widths[i];
+    ctx.save();
+    ctx.translate(cx + w/2, y + Math.sin(t*2 + i*0.8)*2.5);
+    ctx.rotate((i%2 ? 0.045 : -0.045) + Math.sin(t*1.6 + i*0.9)*0.04);
+    ctx.fillStyle = 'rgba(42,31,24,0.35)';
+    ctx.fillText(ch, -w/2 + size*0.05, size*0.06);
+    ctx.lineJoin = 'round'; ctx.lineWidth = size*0.16; ctx.strokeStyle = '#2a1f18';
+    ctx.strokeText(ch, -w/2, 0);
+    const g = ctx.createLinearGradient(0, -size*0.9, 0, 0);
+    g.addColorStop(0, '#ffe08a'); g.addColorStop(1, '#ff8f3a');
+    ctx.fillStyle = g; ctx.fillText(ch, -w/2, 0);
+    ctx.restore();
+    cx += w + gap;
+  });
+  ctx.textAlign = 'center';
+}
+
+function drawTippedBucket(x, y, sc, t) {
+  // lying on its side, opening to the right, water spilled on the sand
+  ctx.save(); ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(95,168,211,0.55)';
+  ctx.beginPath(); ctx.ellipse(70*sc, 30*sc, 78*sc, 14*sc, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.beginPath(); ctx.ellipse(0, 34*sc, 80*sc, 12*sc, 0, 0, Math.PI*2); ctx.fill();
+  ctx.rotate(Math.PI/2 - 0.12);
+  const bw = 110*sc, bh = 105*sc;
+  const grad = ctx.createLinearGradient(-bw/2, 0, bw/2, 0);
+  grad.addColorStop(0, '#8ba3b8'); grad.addColorStop(0.5, '#6f8698'); grad.addColorStop(1, '#4f6274');
+  ctx.fillStyle = grad; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3.5*sc; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-bw/2, -bh/2); ctx.lineTo(bw/2, -bh/2);
+  ctx.lineTo(bw*0.38, bh/2); ctx.lineTo(-bw*0.38, bh/2);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#9db4c8';
+  ctx.beginPath(); ctx.rect(-bw/2-5*sc, -bh/2-9*sc, bw+10*sc, 11*sc); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#26333f';
+  ctx.beginPath(); ctx.ellipse(0, -bh/2-4*sc, bw/2+3*sc, 24*sc, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#3d5266';
+  ctx.beginPath(); ctx.ellipse(0, -bh/2-4*sc, bw/2-10*sc, 15*sc, 0, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+  // steam still curling out of it
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  for (let i = 0; i < 3; i++) {
+    const p = ((t*0.35 + i*0.33) % 1);
+    ctx.globalAlpha = (1-p)*0.5;
+    ctx.beginPath(); ctx.arc(x + 62*sc + Math.sin(p*6+i)*8*sc, y - 6*sc - p*70*sc, (8+i*3)*sc*(0.6+p*0.6), 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawTitle() {
   const t = performance.now()/1000;
-  ctx.textAlign = 'center';
-  drawCrab(W/2, H*0.2, 44, { color:'#f0824f', color2:'#c65f33' }, Math.sin(t)>0?1:-1, Math.sin(t*2)*0.1, true, 'player');
-  ctx.font = '900 ' + Math.min(W*0.12, 60) + 'px system-ui, sans-serif';
-  ctx.fillStyle = '#ffd76b'; ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 8;
-  ctx.strokeText('CRAB SCRAMBLE', W/2, H*0.34);
-  ctx.fillText('CRAB SCRAMBLE', W/2, H*0.34);
+  const sc = Math.min(W, 430)/430;
+  const horizon = H*0.3, shore = H*0.385;
 
-  const bw = Math.min(W*0.7, 280), bx = W/2 - bw/2;
-  btn(bx, H*0.4, bw, 56, '🗺  LEVELS', () => { mode='map'; mapScroll=null; selectedLevel=null; }, '#4a7a5c');
-  btn(bx, H*0.4+70, bw, 56, '♾  ENDLESS — bucket #' + DAILY_SEED%1000, () => { runMode='endless'; reset(); mode='play'; }, '#3d5266');
-  btn(bx, H*0.4+140, bw, 44, muted ? '🔇 sound off' : '🔊 sound on', () => { muted = !muted; }, '#33424f');
+  // sky
+  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+  sky.addColorStop(0, '#6fb8ef'); sky.addColorStop(1, '#cfe9fb');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, horizon+2);
+  // sun
+  ctx.fillStyle = 'rgba(255,236,170,0.35)';
+  ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 56*sc, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffe9a8'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc;
+  ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 30*sc, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  // clouds
+  const cloud = (cx, cy, s) => {
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc;
+    ctx.beginPath();
+    ctx.arc(cx-22*s, cy, 14*s, 0, Math.PI*2); ctx.arc(cx, cy-8*s, 18*s, 0, Math.PI*2);
+    ctx.arc(cx+24*s, cy, 13*s, 0, Math.PI*2); ctx.rect(cx-22*s, cy, 46*s, 13*s);
+    ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx-36*s, cy+13*s); ctx.lineTo(cx+37*s, cy+13*s); ctx.stroke();
+  };
+  cloud(((t*9) % (W+160)) - 80, H*0.07, sc*1.1);
+  cloud(((t*6 + W*0.55) % (W+160)) - 80, H*0.2, sc*0.8);
+  // gull
+  {
+    const gx = ((t*28) % (W+120)) - 60, gy = H*0.16 + Math.sin(t*3)*4;
+    ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 2.5*sc; ctx.lineCap = 'round';
+    const flap = Math.sin(t*9)*4*sc;
+    ctx.beginPath(); ctx.moveTo(gx-12*sc, gy+flap); ctx.quadraticCurveTo(gx-5*sc, gy-5*sc, gx, gy);
+    ctx.quadraticCurveTo(gx+5*sc, gy-5*sc, gx+12*sc, gy+flap); ctx.stroke();
+  }
 
-  // quests
-  ctx.font = '700 14px system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText('— DAILY QUESTS —', W/2, H*0.4 + 218);
-  ctx.font = '600 13px system-ui, sans-serif';
-  quests.forEach((q, i) => {
-    ctx.fillStyle = q.done ? '#9fe08a' : 'rgba(255,255,255,0.6)';
-    const p = Math.min(q.prog, q.target);
-    ctx.fillText((q.done ? '✓ ' : '') + q.text + '  (' + Math.floor(p) + '/' + q.target + ')', W/2, H*0.4 + 242 + i*22);
+  // sea
+  const sea = ctx.createLinearGradient(0, horizon, 0, shore);
+  sea.addColorStop(0, '#2f6f9e'); sea.addColorStop(1, '#5fb5c9');
+  ctx.fillStyle = sea; ctx.fillRect(0, horizon, W, shore-horizon+8);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2*sc;
+  for (let i = 0; i < 3; i++) {
+    const y = horizon + (shore-horizon)*(0.3 + i*0.22);
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 10) ctx.lineTo(x, y + Math.sin(x*0.05 + t*2 + i)*2.5);
+    ctx.stroke();
+  }
+
+  // sand with a lapping foam edge
+  const sand = ctx.createLinearGradient(0, shore, 0, H);
+  sand.addColorStop(0, '#f2dfb0'); sand.addColorStop(1, '#e0c48c');
+  ctx.fillStyle = sand;
+  ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(0, shore);
+  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shore + Math.sin(x*0.03 + t*1.2)*5 + Math.sin(t*0.9)*4);
+  ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3*sc;
+  ctx.beginPath();
+  for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shore + Math.sin(x*0.03 + t*1.2)*5 + Math.sin(t*0.9)*4);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(160,120,70,0.25)';
+  for (let i = 0; i < 26; i++) {
+    const sx = ((i*173) % W), sy = shore + 20 + ((i*97) % (H-shore-40));
+    ctx.beginPath(); ctx.arc(sx, sy, 1.6*sc, 0, Math.PI*2); ctx.fill();
+  }
+
+  // title
+  const ts1 = Math.min(W*0.17, 72)*sc, ts2 = Math.min(W*0.14, 58)*sc;
+  drawTitleWord('CRAB', W/2, H*0.08 + ts1*0.7, ts1, t);
+  drawTitleWord('SCRAMBLE', W/2, H*0.08 + ts1*0.7 + ts2*1.05, ts2, t);
+
+  // the escape scene: tipped bucket, cast loose on the sand
+  const sceneY = shore + (H*0.58 - shore)*0.42;
+  drawTippedBucket(W*0.24, sceneY + 4*sc, sc*0.72, t);
+  // sand pail for the king
+  {
+    const px = W*0.8, py = sceneY + 26*sc;
+    ctx.fillStyle = '#e5605a'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(px-22*sc, py-30*sc); ctx.lineTo(px+22*sc, py-30*sc);
+    ctx.lineTo(px+16*sc, py); ctx.lineTo(px-16*sc, py); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff8a7f'; ctx.fillRect(px-25*sc, py-36*sc, 50*sc, 7*sc); ctx.strokeRect(px-25*sc, py-36*sc, 50*sc, 7*sc);
+  }
+  const cast = [
+    { x: W*0.8,  y: sceneY - 24*sc, r: 19*sc, st: TYPES.king,     face: -1, type: 'king' },
+    { x: W*0.6,  y: sceneY + 6*sc,  r: 21*sc, st: TYPES.fiddler,  face: -1, type: 'fiddler' },
+    { x: W*0.1,  y: sceneY + 46*sc, r: 15*sc, st: TYPES.blue,     face: 1,  type: 'blue' },
+    { x: W*0.9,  y: sceneY + 44*sc, r: 15*sc, st: TYPES.speckled, face: -1, type: 'speckled' },
+    { x: W*0.7,  y: sceneY + 52*sc, r: 16*sc, st: TYPES.red,      face: -1, type: 'red' },
+    { x: W*0.5,  y: sceneY + 44*sc, r: 27*sc, st: { color:'#f0824f', color2:'#c65f33' }, face: 1, type: 'player', hero: true },
+  ];
+  cast.sort((a, b) => a.y - b.y);
+  cast.forEach((c, i) => {
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + c.r*0.9, c.r*1.3, c.r*0.35, 0, 0, Math.PI*2); ctx.fill();
+    const wig = Math.sin(t*(c.hero ? 2.4 : 1.6) + i*1.3)*(c.hero ? 0.08 : 0.05);
+    drawCrab(c.x, c.y, c.r, c.st, c.face, wig, !!c.hero, c.type, false, c.hero ? 'joy' : undefined);
   });
-  ctx.font = '800 16px system-ui, sans-serif';
-  ctx.fillStyle = '#f2e3c0';
-  ctx.fillText(wallet + ' sand dollars', W/2, H*0.4 + 242 + 3*22 + 8);
+
+  // driftwood plank with the buttons
+  const bw = Math.min(W*0.74, 300), bx = W/2 - bw/2, by = H*0.585;
+  const ph = 50+50+40 + 10*2 + 22;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  roundRect(bx-14, by-12+6, bw+28, ph, 16); ctx.fill();
+  ctx.fillStyle = '#9a6a45'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc;
+  roundRect(bx-14, by-12, bw+28, ph, 16); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(60,35,20,0.35)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 4; i++) {
+    const gy = by - 4 + i*(ph/4);
+    ctx.beginPath(); ctx.moveTo(bx-4, gy); ctx.quadraticCurveTo(W/2, gy + 6, bx+bw+4, gy - 2); ctx.stroke();
+  }
+  ctx.restore();
+  btn(bx, by, bw, 50, '🗺  LEVELS', () => { mode='map'; mapScroll=null; selectedLevel=null; }, '#4a7a5c');
+  btn(bx, by+60, bw, 50, '♾  ENDLESS  ·  #' + DAILY_SEED%1000, () => { runMode='endless'; reset(); mode='play'; }, '#2f5f86');
+  btn(bx, by+120, bw, 40, muted ? '🔇 sound off' : '🔊 sound on', () => { muted = !muted; saveGame(); }, '#5a4636');
+
+  // quests, compact, on the sand
+  const qy = by + ph - 12 + 20;
+  ctx.textAlign = 'center';
+  ctx.font = '800 12px system-ui, sans-serif'; ctx.fillStyle = '#6b4a2e';
+  ctx.fillText('DAILY QUESTS  ·  ' + wallet + ' sand dollars', W/2, qy);
+  ctx.font = '600 12px system-ui, sans-serif';
+  quests.forEach((q, i) => {
+    ctx.fillStyle = q.done ? '#2f7a4a' : '#7a5a3a';
+    const p = Math.min(q.prog, q.target);
+    ctx.fillText((q.done ? '✓ ' : '') + q.text + '  (' + Math.floor(p) + '/' + q.target + ')', W/2, qy + 17 + i*16);
+  });
+
+  // reset progress (tap twice)
+  const armed = performance.now() < resetArmedT;
+  ctx.font = '600 11px system-ui, sans-serif';
+  ctx.fillStyle = armed ? '#c0392b' : 'rgba(90,70,40,0.5)';
+  ctx.textAlign = 'right';
+  ctx.fillText(armed ? 'tap again to reset progress' : 'reset progress', W-12, H-10);
+  buttons.push({ x: W-170, y: H-30, w: 160, h: 26, fn: () => {
+    if (performance.now() < resetArmedT) { wipeGame(); resetArmedT = 0; }
+    else resetArmedT = performance.now() + 2500;
+  }});
+  ctx.textAlign = 'center';
 }
 
 function drawMap() {
