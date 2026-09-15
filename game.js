@@ -1400,7 +1400,7 @@ function buildTitleCast() {
   const now = performance.now()/1000;
   const mk = (o) => Object.assign({ evStart: null, next: now + rnd(1, o.gap[1]), blinkNext: now + rnd(1, 5), blinkStart: null }, o);
   titleCast = [
-    mk({ fx: 0.8,  dy: -24, r: 19, st: TYPES.king,     face: -1, type: 'king',     ev: 'nod',     gap: [5, 9], dur: 0.7 }),
+    mk({ fx: 0.8,  dy: -40, r: 18, st: TYPES.king,     face: -1, type: 'king',     ev: 'nod',     gap: [5, 9], dur: 0.7 }),
     mk({ fx: 0.62, dy: 6,   r: 21, st: TYPES.fiddler,  face: -1, type: 'fiddler',  ev: 'snip',    gap: [3, 5], dur: 0.35 }),
     mk({ fx: 0.1,  dy: 46,  r: 15, st: TYPES.blue,     face: 1,  type: 'blue',     ev: 'dig',     gap: [5, 9], dur: 0.7 }),
     mk({ fx: 0.9,  dy: 44,  r: 15, st: TYPES.speckled, face: -1, type: 'speckled', ev: 'hop',     gap: [4, 8], dur: 0.4 }),
@@ -1475,7 +1475,7 @@ function drawTitle() {
   // sky
   const sky = ctx.createLinearGradient(0, 0, 0, horizon);
   sky.addColorStop(0, '#6fb8ef'); sky.addColorStop(1, '#cfe9fb');
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, horizon+2);
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, horizon+6);
   // sun
   ctx.fillStyle = 'rgba(255,236,170,0.35)';
   ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 56*sc, 0, Math.PI*2); ctx.fill();
@@ -1483,12 +1483,11 @@ function drawTitle() {
   ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 30*sc, 0, Math.PI*2); ctx.fill(); ctx.stroke();
   // clouds
   const cloud = (cx, cy, s) => {
-    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc;
-    ctx.beginPath();
-    ctx.arc(cx-22*s, cy, 14*s, 0, Math.PI*2); ctx.arc(cx, cy-8*s, 18*s, 0, Math.PI*2);
-    ctx.arc(cx+24*s, cy, 13*s, 0, Math.PI*2); ctx.rect(cx-22*s, cy, 46*s, 13*s);
-    ctx.fill();
-    ctx.beginPath(); ctx.moveTo(cx-36*s, cy+13*s); ctx.lineTo(cx+37*s, cy+13*s); ctx.stroke();
+    const lumps = [[-22, 2, 14], [0, -6, 18], [24, 2, 13], [-6, 6, 12], [12, 7, 11]];
+    ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 6*sc;
+    for (const [lx, ly, lr] of lumps) { ctx.beginPath(); ctx.arc(cx+lx*s, cy+ly*s, lr*s, 0, Math.PI*2); ctx.stroke(); }
+    ctx.fillStyle = '#fff';
+    for (const [lx, ly, lr] of lumps) { ctx.beginPath(); ctx.arc(cx+lx*s, cy+ly*s, lr*s, 0, Math.PI*2); ctx.fill(); }
   };
   cloud(((t*9) % (W+160)) - 80, H*0.07, sc*1.1);
   cloud(((t*6 + W*0.55) % (W+160)) - 80, H*0.2, sc*0.8);
@@ -1504,7 +1503,7 @@ function drawTitle() {
   // sea
   const sea = ctx.createLinearGradient(0, horizon, 0, shore);
   sea.addColorStop(0, '#2f6f9e'); sea.addColorStop(1, '#5fb5c9');
-  ctx.fillStyle = sea; ctx.fillRect(0, horizon, W, shore-horizon+8);
+  ctx.fillStyle = sea; ctx.fillRect(0, horizon, W, shore-horizon+60);
   ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2*sc;
   for (let i = 0; i < 3; i++) {
     const y = horizon + (shore-horizon)*(0.3 + i*0.22);
@@ -1554,13 +1553,32 @@ function drawTitle() {
   // the escape scene: tipped bucket, cast loose on the sand
   const sceneY = shore + (H*0.58 - shore)*0.42;
   drawTippedBucket(W*0.24, sceneY + 4*sc, sc*0.72, t);
-  // sand pail for the king
+  // sandcastle throne for the king (built, naturally, with a bucket)
   {
-    const px = W*0.8, py = sceneY + 26*sc;
-    ctx.fillStyle = '#e5605a'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc; ctx.lineJoin = 'round';
-    ctx.beginPath(); ctx.moveTo(px-22*sc, py-30*sc); ctx.lineTo(px+22*sc, py-30*sc);
-    ctx.lineTo(px+16*sc, py); ctx.lineTo(px-16*sc, py); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#ff8a7f'; ctx.fillRect(px-25*sc, py-36*sc, 50*sc, 7*sc); ctx.strokeRect(px-25*sc, py-36*sc, 50*sc, 7*sc);
+    const px = W*0.8, py = sceneY + 30*sc;
+    ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc; ctx.lineJoin = 'round';
+    const tower = (tx, tw, th, shade) => {
+      ctx.fillStyle = shade ? '#d9bb82' : '#ecd39c';
+      ctx.beginPath(); ctx.rect(tx - tw/2, py - th, tw, th); ctx.fill(); ctx.stroke();
+      // crenellations
+      const n = 3, cw = tw/(n*2-1);
+      for (let i = 0; i < n; i++) {
+        ctx.beginPath(); ctx.rect(tx - tw/2 + i*cw*2, py - th - cw*0.9, cw, cw*0.9); ctx.fill(); ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(120,90,50,0.25)';
+      ctx.beginPath(); ctx.rect(tx - tw/2 + tw*0.62, py - th*0.55, tw*0.16, th*0.18); ctx.fill();
+    };
+    ctx.fillStyle = '#e6cc93';
+    ctx.beginPath(); ctx.ellipse(px, py, 46*sc, 9*sc, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    tower(px - 26*sc, 20*sc, 30*sc, true);
+    tower(px + 26*sc, 20*sc, 30*sc, true);
+    tower(px, 30*sc, 56*sc, false);
+    // flag on the right tower, flapping
+    const fx = px + 26*sc, fy = py - 30*sc - 6*sc, flap = Math.sin(t*5)*3*sc;
+    ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx, fy - 24*sc); ctx.stroke();
+    ctx.fillStyle = '#e5605a';
+    ctx.beginPath(); ctx.moveTo(fx, fy - 24*sc); ctx.lineTo(fx + 16*sc, fy - 19*sc + flap); ctx.lineTo(fx, fy - 13*sc);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
   }
   if (!titleCast) buildTitleCast();
   const now = t;
