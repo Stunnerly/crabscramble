@@ -153,7 +153,7 @@ function saveGame() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       unlocked, levelStars, levelDone, wallet, best, ghostBest: gb,
       quests: { day: DAILY_SEED, list: quests.map(q => ({ prog: q.prog, done: q.done })) },
-      muted, gestures,
+      muted, gestures, aimMode,
     }));
   } catch (e) {}
 }
@@ -172,6 +172,7 @@ function loadGame() {
       d.quests.list.forEach((q, i) => { if (quests[i]) { quests[i].prog = q.prog || 0; quests[i].done = !!q.done; } });
     if (typeof d.muted === 'boolean') muted = d.muted;
     if (d.gestures) { gestures.flick = d.gestures.flick|0; gestures.sling = d.gestures.sling|0; }
+    if (d.aimMode === 'pull' || d.aimMode === 'swipe') aimMode = d.aimMode;
   } catch (e) {}
 }
 function wipeGame() {
@@ -302,7 +303,7 @@ function pDown(x, y) {
     return;
   }
   if (mode === 'title') titlePointer = { x, y, t: performance.now() };
-  if (mode === 'title' || mode === 'dead' || mode === 'won') {
+  if (mode === 'title' || mode === 'dead' || mode === 'won' || mode === 'aimpick') {
     for (const b of buttons) {
       if (x >= b.x && x <= b.x+b.w && y >= b.y && y <= b.y+b.h) { b.fn(); return; }
     }
@@ -353,7 +354,13 @@ function isIgnored(obj) { return player.ignoreList.some(e => e.obj === obj); }
 // the finger DOWN is a pull-back (slingshot) and a drag that moves it UP is
 // a flick toward the target. Both launch the same way; nobody has to learn
 // the other one exists.
-function isFlick() { return aim && (aim.cy - aim.sy) < -12; }
+let aimMode = null;               // 'pull' (slingshot) or 'swipe' (toward target)
+let pendingStart = null;
+function isFlick() { return aimMode === 'swipe'; }
+function startPlay(fn) {
+  if (aimMode === null) { pendingStart = fn; mode = 'aimpick'; }
+  else fn();
+}
 function launchVector() {
   let dx = aim.sx - aim.cx, dy = aim.sy - aim.cy;
   if (isFlick()) { dx = -dx; dy = -dy; }
@@ -815,6 +822,7 @@ function draw() {
   ctx.fillRect(lw-4, wallTop, 4, H-wallTop); ctx.fillRect(rw, wallTop, 4, H-wallTop);
 
   if (mode === 'title') { drawTitle(); ctx.restore(); return; }
+  if (mode === 'aimpick') { drawTitle(); drawAimPick(); ctx.restore(); return; }
   if (mode === 'map')   { drawMap(); ctx.restore(); return; }
   if (mode === 'escape'){ drawEscape(); ctx.restore(); return; }
 
@@ -1409,6 +1417,44 @@ function buildTitleCast() {
   ];
 }
 
+function drawAimPick() {
+  buttons = [];
+  ctx.fillStyle = 'rgba(15,25,35,0.72)'; ctx.fillRect(0, 0, W, H);
+  const cw = Math.min(W*0.88, 340), ch = 330, cx = W/2 - cw/2, cy = H/2 - ch/2;
+  ctx.fillStyle = '#2b3d4f'; roundRect(cx, cy, cw, ch, 16); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; roundRect(cx, cy, cw, ch, 16); ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = '900 22px system-ui, sans-serif'; ctx.fillStyle = '#ffd76b';
+  ctx.fillText('How do you want to aim?', W/2, cy + 40);
+  ctx.font = '600 13px system-ui, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillText('You can switch any time on the title screen.', W/2, cy + 62);
+
+  const t = performance.now()/1000, ph = (t*0.6) % 1;
+  const card = (y, label, sub, key, drawDemo) => {
+    const bh = 104, by = cy + y;
+    btn(cx + 16, by, cw - 32, bh, '', () => { aimMode = key; saveGame(); mode = 'play'; if (pendingStart) pendingStart(); pendingStart = null; }, '#3d5266');
+    ctx.textAlign = 'left';
+    ctx.font = '800 18px system-ui, sans-serif'; ctx.fillStyle = '#fff';
+    ctx.fillText(label, cx + 116, by + 40);
+    ctx.font = '600 12px system-ui, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(sub, cx + 116, by + 62);
+    ctx.textAlign = 'center';
+    drawDemo(cx + 62, by + bh/2);
+  };
+  // demo: crab, target crab above, finger arrow
+  const demo = (dir) => (x, y) => {
+    drawCrab(x, y + 26, 11, { color:'#f0824f', color2:'#c65f33' }, 1, 0, true, 'player');
+    drawCrab(x + 26, y - 26, 9, TYPES.red, -1, 0, false, 'red');
+    ctx.strokeStyle = '#ffd76b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    const ex = dir > 0 ? x + 22*ph : x - 22*ph, ey = dir > 0 ? y + 26 - 44*ph : y + 26 + 34*ph;
+    ctx.beginPath(); ctx.moveTo(x, y + 26); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(ex, ey, 7, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  };
+  card(84,  'Swipe toward it', 'Flick at the crab you want.', 'swipe', demo(1));
+  card(204, 'Pull back & release', 'Drag away, see the arc, let go.', 'pull', demo(-1));
+}
+
 function drawTitleWord(word, x, y, size, t) {
   ctx.font = '900 ' + size + 'px system-ui, sans-serif';
   ctx.textAlign = 'left';
@@ -1425,12 +1471,15 @@ function drawTitleWord(word, x, y, size, t) {
     ctx.save();
     ctx.translate(cx + w/2, py);
     ctx.rotate(rot);
-    ctx.fillStyle = 'rgba(42,31,24,0.35)';
-    ctx.fillText(ch, -w/2 + size*0.05, size*0.06);
-    ctx.lineJoin = 'round'; ctx.lineWidth = size*0.16; ctx.strokeStyle = '#2a1f18';
+    ctx.fillStyle = 'rgba(20,12,8,0.4)';
+    ctx.fillText(ch, -w/2 + size*0.07, size*0.09);
+    // white halo so the letters pop off busy sky/sea behind them
+    ctx.lineJoin = 'round'; ctx.lineWidth = size*0.26; ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.strokeText(ch, -w/2, 0);
-    const g = ctx.createLinearGradient(0, -size*0.9, 0, 0);
-    g.addColorStop(0, '#ffe08a'); g.addColorStop(1, '#ff8f3a');
+    ctx.lineWidth = size*0.17; ctx.strokeStyle = '#2a1f18';
+    ctx.strokeText(ch, -w/2, 0);
+    const g = ctx.createLinearGradient(0, -size*0.9, 0, size*0.15);
+    g.addColorStop(0, '#fff4c2'); g.addColorStop(0.45, '#ffc23c'); g.addColorStop(1, '#ff7a1f');
     ctx.fillStyle = g; ctx.fillText(ch, -w/2, 0);
     ctx.restore();
     cx += w + gap;
@@ -1442,9 +1491,11 @@ function drawTitleWord(word, x, y, size, t) {
 function drawTippedBucket(x, y, sc, t) {
   // lying on its side, opening to the right, water spilled on the sand
   ctx.save(); ctx.translate(x, y);
-  ctx.fillStyle = 'rgba(95,168,211,0.55)';
-  ctx.beginPath(); ctx.ellipse(70*sc, 30*sc, 78*sc, 14*sc, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillStyle = 'rgba(60,175,225,0.6)';
+  ctx.beginPath(); ctx.ellipse(70*sc, 30*sc, 84*sc, 16*sc, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2*sc;
+  ctx.beginPath(); ctx.ellipse(70*sc, 30*sc, 84*sc, 16*sc, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
   ctx.beginPath(); ctx.ellipse(0, 34*sc, 80*sc, 12*sc, 0, 0, Math.PI*2); ctx.fill();
   ctx.rotate(Math.PI/2 - 0.12);
   const bw = 110*sc, bh = 105*sc;
@@ -1480,12 +1531,12 @@ function drawTitle() {
 
   // sky
   const sky = ctx.createLinearGradient(0, 0, 0, horizon);
-  sky.addColorStop(0, '#6fb8ef'); sky.addColorStop(1, '#cfe9fb');
+  sky.addColorStop(0, '#2e8fe0'); sky.addColorStop(0.55, '#5fb3f2'); sky.addColorStop(1, '#bfe6ff');
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, horizon+6);
   // sun
-  ctx.fillStyle = 'rgba(255,236,170,0.35)';
-  ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 56*sc, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#ffe9a8'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3*sc;
+  ctx.fillStyle = 'rgba(255,225,120,0.5)';
+  ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 64*sc, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 3.5*sc;
   ctx.beginPath(); ctx.arc(W*0.88, H*0.05, 30*sc, 0, Math.PI*2); ctx.fill(); ctx.stroke();
   // clouds
   const cloud = (cx, cy, s) => {
@@ -1495,8 +1546,8 @@ function drawTitle() {
     ctx.fillStyle = '#fff';
     for (const [lx, ly, lr] of lumps) { ctx.beginPath(); ctx.arc(cx+lx*s, cy+ly*s, lr*s, 0, Math.PI*2); ctx.fill(); }
   };
-  cloud(((t*9) % (W+160)) - 80, H*0.045, sc*0.9);
-  cloud(((t*6 + W*0.55) % (W+160)) - 80, H*0.085, sc*0.65);
+  cloud(((t*9) % (W+160)) - 80, H*0.03, sc*0.8);
+  cloud(((t*6 + W*0.42) % (W+160)) - 80, H*0.028, sc*0.55);
   // gull
   {
     const gx = ((t*28) % (W+120)) - 60, gy = H*0.16 + Math.sin(t*3)*4;
@@ -1508,7 +1559,7 @@ function drawTitle() {
 
   // sea
   const sea = ctx.createLinearGradient(0, horizon, 0, shore);
-  sea.addColorStop(0, '#2f6f9e'); sea.addColorStop(1, '#5fb5c9');
+  sea.addColorStop(0, '#0f6aa8'); sea.addColorStop(1, '#2fc4c9');
   ctx.fillStyle = sea; ctx.fillRect(0, horizon, W, shore-horizon+60);
   ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2*sc;
   for (let i = 0; i < 3; i++) {
@@ -1530,7 +1581,7 @@ function drawTitle() {
   const tide = Math.sin(t*Math.PI*2/6)*9*sc;
   const shoreAt = (x) => shore + tide + Math.sin(x*0.03 + t*1.2)*5;
   const sand = ctx.createLinearGradient(0, shore, 0, H);
-  sand.addColorStop(0, '#f2dfb0'); sand.addColorStop(1, '#e0c48c');
+  sand.addColorStop(0, '#ffe9ae'); sand.addColorStop(1, '#e8c273');
   ctx.fillStyle = sand;
   ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(0, shoreAt(0));
   for (let x = 0; x <= W+12; x += 12) ctx.lineTo(Math.min(x, W), shoreAt(x));
@@ -1551,8 +1602,15 @@ function drawTitle() {
     ctx.beginPath(); ctx.arc(sx, sy, 1.6*sc, 0, Math.PI*2); ctx.fill();
   }
 
+  // vignette: darken the far corners so the eye lands on the crest and hero
+  {
+    const vg = ctx.createRadialGradient(W/2, H*0.14, H*0.12, W/2, H*0.14, H*0.62);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(10,20,35,0.28)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  }
+
   // title
-  const ts1 = Math.min(W*0.17, 72)*sc, ts2 = Math.min(W*0.14, 58)*sc;
+  const ts1 = Math.min(W*0.185, 78)*sc, ts2 = Math.min(W*0.15, 62)*sc;
   const crabLetters = drawTitleWord('CRAB', W/2, H*0.115 + ts1*0.7, ts1, t);
   drawTitleWord('SCRAMBLE', W/2, H*0.115 + ts1*0.7 + ts2*1.05, ts2, t);
   // the hero, perched on the C, casing the joint: still body, shifty eyes
@@ -1563,8 +1621,8 @@ function drawTitle() {
       heroLook.next = t + rnd(0.5, 2.2);
     }
     let tx = heroLook.tx, ty = heroLook.ty;
-    const hr = ts1*0.44;
-    const hxs = L.cx - L.w*0.22, hys = L.cy - ts1*0.72 - hr*0.7;
+    const hr = ts1*0.25;
+    const hxs = L.cx - L.w*0.22, hys = L.cy - ts1*0.72 - hr*0.52;
     if (pointerLive) {
       const dx = titlePointer.x - hxs, dy = titlePointer.y - hys, d = Math.hypot(dx, dy) || 1, k = Math.min(1, d/120);
       tx = dx/d*k; ty = dy/d*k;
@@ -1575,7 +1633,12 @@ function drawTitle() {
     if (heroLook.blinkStart !== null) { if (t - heroLook.blinkStart > 0.15) { heroLook.blinkStart = null; heroLook.blinkNext = t + rnd(2, 5); } else blink = 1; }
     ctx.save();
     ctx.translate(L.cx, L.cy); ctx.rotate(L.rot);
-    drawCrab(-L.w*0.22, -ts1*0.72 - hr*0.7, hr, { color:'#f0824f', color2:'#c65f33' }, 1, 0, true, 'player', false, 'normal',
+    const gx = -L.w*0.22, gy = -ts1*0.72 - hr*0.52;
+    // small contact shadow where his feet meet the letter — this is what
+    // sells "standing on it" rather than "floating in front of it"
+    ctx.fillStyle = 'rgba(20,12,8,0.28)';
+    ctx.beginPath(); ctx.ellipse(gx, gy + hr*0.78, hr*0.75, hr*0.2, 0, 0, Math.PI*2); ctx.fill();
+    drawCrab(gx, gy, hr, { color:'#f0824f', color2:'#c65f33' }, 1, 0, true, 'player', false, 'normal',
       { lookX: heroLook.x, lookY: heroLook.y, blink });
     ctx.restore();
   }
@@ -1583,6 +1646,7 @@ function drawTitle() {
   // the escape scene: tipped bucket, cast loose on the sand
   const sceneY = shore + (H*0.58 - shore)*0.42;
   drawTippedBucket(W*0.24, sceneY + 4*sc, sc*0.72, t);
+  ctx.save();
   // sandcastle throne for the king (built, naturally, with a bucket)
   {
     const px = W*0.8, py = sceneY + 30*sc;
@@ -1656,6 +1720,7 @@ function drawTitle() {
   titleSand = titleSand.filter(g => g.t < 0.6);
   ctx.fillStyle = '#d9b97a';
   for (const g of titleSand) { ctx.beginPath(); ctx.arc(g.x, g.y, 2*sc, 0, Math.PI*2); ctx.fill(); }
+  ctx.restore();
 
   // driftwood plank with the buttons
   const bw = Math.min(W*0.74, 300), bx = W/2 - bw/2, by = H*0.585;
@@ -1672,8 +1737,10 @@ function drawTitle() {
   }
   ctx.restore();
   btn(bx, by, bw, 50, '🗺  LEVELS', () => { mode='map'; mapScroll=null; selectedLevel=null; }, '#4a7a5c');
-  btn(bx, by+60, bw, 50, '♾  ENDLESS  ·  #' + DAILY_SEED%1000, () => { runMode='endless'; reset(); mode='play'; }, '#2f5f86');
-  btn(bx, by+120, bw, 40, muted ? '🔇 sound off' : '🔊 sound on', () => { muted = !muted; saveGame(); }, '#5a4636');
+  btn(bx, by+60, bw, 50, '♾  ENDLESS  ·  #' + DAILY_SEED%1000, () => startPlay(() => { runMode='endless'; reset(); mode='play'; }), '#2f5f86');
+  btn(bx, by+120, bw*0.47, 40, muted ? '🔇 off' : '🔊 on', () => { muted = !muted; saveGame(); }, '#5a4636');
+  btn(bx + bw*0.53, by+120, bw*0.47, 40, aimMode === 'swipe' ? '👆 swipe aim' : '🎯 pull aim',
+      () => { aimMode = aimMode === 'swipe' ? 'pull' : 'swipe'; saveGame(); }, '#5a4636');
 
   // quests, compact, on the sand
   const qy = by + ph - 12 + 20;
@@ -1830,9 +1897,9 @@ function drawLevelCard(n) {
     ctx.font = '600 14px system-ui, sans-serif'; ctx.fillStyle = '#fff';
     lv.intro.forEach((line, i) => ctx.fillText(line, W/2, cy+204+i*19));
   }
-  btn(W/2-90, cy+ch-64, 180, 48, '▶  START', () => {
+  btn(W/2-90, cy+ch-64, 180, 48, '▶  START', () => startPlay(() => {
     runMode = 'level'; levelNum = n; selectedLevel = null; reset(); mode = 'play';
-  }, '#4a7a5c');
+  }), '#4a7a5c');
   buttons.push({ x:0, y:0, w:W, h:cy, fn: () => { selectedLevel = null; } });
   buttons.push({ x:0, y:cy+ch, w:W, h:H-(cy+ch), fn: () => { selectedLevel = null; } });
 }
