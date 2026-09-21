@@ -407,8 +407,13 @@ function landOnCrab(crab) {
   if (t === 'red' && fresh) {
     player.combo++;
     sfx.combo(player.combo);
-    player.scale = Math.min(player.scale + T.growStep, T.growMax);
-    popup('GROW!', player.x, player.y-30, '#ff6b5e');
+    if (player.scale >= T.growMax - 0.001) {
+      popup('MAX!', player.x, player.y-30, '#ff6b5e');
+      addDollars(2, player.x, player.y-56);
+    } else {
+      player.scale = Math.min(player.scale + T.growStep, T.growMax);
+      popup('GROW!', player.x, player.y-30, '#ff6b5e');
+    }
     spawnBurst(player.x, player.y, 'rgba(217,72,59,');
     spendCrab(crab);
     if (player.combo >= 3) {
@@ -1363,10 +1368,20 @@ function drawHUD() {
 
   // molt shells indicator (extra sizes = spare shells)
   const spare = Math.round((player.scale - 1)/T.moltCost * 1) ;
-  ctx.textAlign = 'center';
-  ctx.font = '600 12px system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(240,130,79,0.9)';
-  ctx.fillText('shells: ' + Math.max(0, Math.floor((player.scale-1)/T.moltCost + 0.01)), W/2, 76);
+  {
+    const n = Math.max(0, Math.floor((player.scale-1)/T.moltCost + 0.01));
+    const danger = n === 0 && water.started && water.heat >= 1;
+    ctx.textAlign = 'center';
+    ctx.font = '700 11px system-ui, sans-serif';
+    ctx.fillStyle = danger ? '#ff6b4a' : 'rgba(240,130,79,0.9)';
+    ctx.fillText(danger ? 'NO SHELLS — water = boiled' : 'shells (lives)', W/2, 74);
+    for (let i = 0; i < Math.max(n, 1); i++) {
+      const sx = W/2 - (Math.max(n,1)-1)*9 + i*18, sy = 88;
+      ctx.beginPath(); ctx.ellipse(sx, sy, 7, 5, 0.3, 0, Math.PI*2);
+      if (i < n) { ctx.fillStyle = '#c65f33'; ctx.fill(); ctx.strokeStyle = '#2a1f18'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      else { ctx.strokeStyle = danger ? '#ff6b4a' : 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+  }
 
   let by = 100;
   ctx.textAlign = 'right';
@@ -2015,26 +2030,28 @@ function drawDead() {
   const h = Math.floor(player.maxHeight);
   ctx.font = '700 26px system-ui, sans-serif'; ctx.fillStyle = '#fff';
   ctx.fillText(h + 'm climbed', W/2, H*0.32+52);
+  ctx.font = '600 14px system-ui, sans-serif'; ctx.fillStyle = '#ffb3a0';
+  ctx.fillText(deathCause === 'pinched' ? 'gripped with no shell to shed — molting slips you free' : 'no shell to molt — red crabs grow you a spare', W/2, H*0.32+70);
   // near-miss messaging
   ctx.font = '600 17px system-ui, sans-serif';
   if (cfg) {
     const gap = cfg.t - h;
     ctx.fillStyle = gap <= 15 ? '#ffd76b' : 'rgba(255,255,255,0.75)';
-    ctx.fillText(gap <= 15 ? 'only ' + gap + 'm from the rim!!' : gap + 'm from the rim', W/2, H*0.32+84);
+    ctx.fillText(gap <= 15 ? 'only ' + gap + 'm from the rim!!' : gap + 'm from the rim', W/2, H*0.32+94);
   } else {
     if (h < best) {
       const gap = best - h;
       ctx.fillStyle = gap <= 20 ? '#ffd76b' : 'rgba(255,255,255,0.75)';
-      ctx.fillText(gap <= 20 ? 'only ' + gap + 'm from your best!!' : gap + 'm from your best', W/2, H*0.32+84);
+      ctx.fillText(gap <= 20 ? 'only ' + gap + 'm from your best!!' : gap + 'm from your best', W/2, H*0.32+94);
     } else if (h === best && h > 0) {
-      ctx.fillStyle = '#9fe08a'; ctx.fillText('NEW BEST!', W/2, H*0.32+84);
+      ctx.fillStyle = '#9fe08a'; ctx.fillText('NEW BEST!', W/2, H*0.32+94);
     }
-    if (beatGhost) { ctx.fillStyle = '#7fd8e8'; ctx.fillText('👻 ghost beaten — new ghost saved', W/2, H*0.32+112); }
+    if (beatGhost) { ctx.fillStyle = '#7fd8e8'; ctx.fillText('👻 ghost beaten — new ghost saved', W/2, H*0.32+118); }
   }
   ctx.fillStyle = '#f2e3c0';
-  ctx.fillText('+' + runDollars + ' sand dollars', W/2, H*0.32+142);
+  ctx.fillText('+' + runDollars + ' sand dollars', W/2, H*0.32+146);
   ctx.font = '600 12px system-ui, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.fillText('aim: ' + gestures.sling + ' pull-back · ' + gestures.flick + ' flick', W/2, H*0.32+166);
+  ctx.fillText('aim: ' + gestures.sling + ' pull-back · ' + gestures.flick + ' flick', W/2, H*0.32+170);
 
   const bw = Math.min(W*0.7, 280), bx = W/2-bw/2;
   btn(bx, H*0.62, bw, 56, '↻  SCRAMBLE AGAIN', () => { reset(); mode='play'; }, '#4a7a5c');
